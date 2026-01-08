@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>부부 가계부</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; }
+    input[type="number"] { width: 140px; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+    button.primary { border-color: #333; }
+    .muted { color: #666; font-size: 12px; }
+    .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 8px; }
+    .tabs button.active { border-bottom-color: #333; font-weight: 600; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>공동 부부 가계부</h1>
+
+  <div class="row">
+    <label>월(month_key):
+      <input id="monthKey" value="2025.08" placeholder="YYYY.MM" />
+    </label>
+    <span class="muted">예: 2025.08</span>
+  </div>
+
+  <div class="tabs row" style="margin-top:12px">
+    <button data-tab="dashboard" class="active">Dashboard</button>
+    <button data-tab="monthly">Monthly Edit</button>
+    <button data-tab="upload">Bulk Upload</button>
+  </div>
+
+  <!-- Dashboard -->
+  <section id="tab-dashboard" class="card">
+    <h2>Dashboard</h2>
+    <div class="row">
+      <button id="btnRefresh" class="primary">DB에서 새로고침</button>
+      <span id="status" class="muted"></span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div class="card" style="flex:1; min-width:220px"><div class="muted">총지출</div><div id="kpiSpend" style="font-size:24px">-</div></div>
+      <div class="card" style="flex:1; min-width:220px"><div class="muted">총저축</div><div id="kpiSave" style="font-size:24px">-</div></div>
+      <div class="card" style="flex:1; min-width:220px"><div class="muted">총수입</div><div id="kpiIncome" style="font-size:24px">-</div></div>
+    </div>
+    <p class="muted">※ 여기 KPI/차트 데이터는 “DB 읽기 API”를 붙이면 자동으로 채워짐</p>
+  </section>
+
+  <!-- Monthly Edit -->
+  <section id="tab-monthly" class="card hidden">
+    <h2>Monthly Edit (기록 UI)</h2>
+    <p class="muted">카테고리명은 기록 시트 항목명 그대로. 값 수정 후 “DB 반영(커밋)”을 누르면 월 단위로 DB를 교체합니다.</p>
+
+    <table id="catTable">
+      <thead>
+        <tr><th>Category</th><th>Amount</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="row" style="margin-top:12px">
+      <button id="btnReload">DB에서 불러오기</button>
+      <button id="btnCommit" class="primary">DB 반영(커밋)</button>
+      <span id="monthlyMsg" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- Bulk Upload -->
+  <section id="tab-upload" class="card hidden">
+    <h2>Bulk Upload</h2>
+    <p class="muted">템플릿(xlsx/csv)을 읽어서 미리보기 후 DB 반영 요청을 보냅니다. (여기선 CSV 예시만 간단히)</p>
+
+    <input type="file" id="fileInput" accept=".csv" />
+    <div class="row" style="margin-top:12px">
+      <button id="btnPreview">미리보기</button>
+      <button id="btnApplyUpload" class="primary">업로드 반영(월 단위 교체)</button>
+      <span id="uploadMsg" class="muted"></span>
+    </div>
+
+    <pre id="preview" style="background:#fafafa; padding:12px; border-radius:10px; overflow:auto; max-height:260px"></pre>
+  </section>
+
+<script>
+  // ====== 설정: 여기만 바꾸면 됨 ======
+  // A안(추천): Power Automate HTTP endpoint URL을 여기에 넣기
+  // 예: const API_BASE = "https://prod-xx.westus.logic.azure.com:443/workflows/...";
+  const API_BASE = ""; // 아직 미설정이면 빈값
+
+  // 기록 시트 카테고리(예시) — 너 기록 항목명 그대로 넣기
+  const CATEGORIES = [
+    "식재료","외식","배달","중식","카페/간식",
+    "쇼핑","미용","구독","생활편의",
+    "여행","문화생활","운동",
+    "보험","병원·약국","건강식품",
+    "회비","경조/선물","친목","기부",
+    "기타",
+    "주거/통신","교통","공과금",
+    "저축","투자","부채상환",
+    "월급","기타수입","금융이자","주식매도"
+  ];
+
+  // ====== 탭 전환 ======
+  document.querySelectorAll(".tabs button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.dataset.tab;
+      document.querySelectorAll("section[id^='tab-']").forEach(s => s.classList.add("hidden"));
+      document.getElementById(`tab-${tab}`).classList.remove("hidden");
+    });
+  });
+
+  // ====== Monthly table 렌더 ======
+  const tbody = document.querySelector("#catTable tbody");
+  const state = { monthly: Object.fromEntries(CATEGORIES.map(c => [c, ""])) };
+
+  function renderTable() {
+    tbody.innerHTML = "";
+    CATEGORIES.forEach(cat => {
+      const tr = document.createElement("tr");
+      const td1 = document.createElement("td"); td1.textContent = cat;
+      const td2 = document.createElement("td");
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.placeholder = "금액";
+      inp.value = state.monthly[cat] ?? "";
+      inp.addEventListener("input", () => state.monthly[cat] = inp.value);
+      td2.appendChild(inp);
+      tr.append(td1, td2);
+      tbody.appendChild(tr);
+    });
+  }
+  renderTable();
+
+  // ====== API helpers ======
+  async function postJson(path, payload) {
+    if (!API_BASE) throw new Error("API_BASE(파워오토메이트/백엔드 URL)가 아직 비어있어요.");
+    const res = await fetch(API_BASE + path, {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json().catch(() => ({}));
+  }
+
+  // ====== DB에서 불러오기(리로드) ======
+  document.getElementById("btnReload").addEventListener("click", async () => {
+    const monthKey = document.getElementById("monthKey").value.trim();
+    const msg = document.getElementById("monthlyMsg");
+    msg.textContent = "불러오는 중...";
+    try {
+      // 예: /readMonthly  (월별 카테고리 합계 반환)
+      const data = await postJson("/readMonthly", { month_key: monthKey });
+      // data: { items: [{category, amount}, ...] }
+      (data.items || []).forEach(it => state.monthly[it.category] = String(it.amount ?? ""));
+      renderTable();
+      msg.textContent = "DB 기준으로 갱신 완료";
+    } catch (e) {
+      msg.textContent = "실패: " + e.message;
+    }
+  });
+
+  // ====== DB 반영(커밋) ======
+  document.getElementById("btnCommit").addEventListener("click", async () => {
+    const monthKey = document.getElementById("monthKey").value.trim();
+    const msg = document.getElementById("monthlyMsg");
+    msg.textContent = "DB 반영 중...";
+    try {
+      // 빈칸은 변경 없음 정책을 쓰려면 여기서 필터링하면 됨
+      const items = Object.entries(state.monthly)
+        .filter(([_, v]) => v !== "" && v !== null && v !== undefined)
+        .map(([category, v]) => ({ category, amount: Number(v) }));
+
+      // 예: /commitMonthly  (월 단위 삭제 후 재생성)
+      await postJson("/commitMonthly", {
+        month_key: monthKey,
+        source: "ui_monthly",
+        items
+      });
+      msg.textContent = "DB 반영 완료 (대시보드/피벗 갱신됨)";
+    } catch (e) {
+      msg.textContent = "실패: " + e.message;
+    }
+  });
+
+  // ====== Bulk Upload (CSV만 간단 예시) ======
+  let uploadItems = [];
+  function parseCsv(text) {
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const headers = lines[0].split(",").map(s => s.trim());
+    const idxMonth = headers.indexOf("month_key");
+    const idxCat = headers.indexOf("category");
+    const idxAmt = headers.indexOf("amount");
+    if (idxMonth < 0 || idxCat < 0 || idxAmt < 0) throw new Error("CSV 헤더는 month_key,category,amount 여야 해요.");
+    return lines.slice(1).map(line => {
+      const cols = line.split(",").map(s => s.trim());
+      return { month_key: cols[idxMonth], category: cols[idxCat], amount: Number(cols[idxAmt]) };
+    });
+  }
+
+  document.getElementById("btnPreview").addEventListener("click", async () => {
+    const msg = document.getElementById("uploadMsg");
+    msg.textContent = "";
+    const f = document.getElementById("fileInput").files?.[0];
+    if (!f) { msg.textContent = "CSV 파일을 선택해줘"; return; }
+    const text = await f.text();
+    try {
+      uploadItems = parseCsv(text);
+      document.getElementById("preview").textContent = JSON.stringify(uploadItems.slice(0, 50), null, 2);
+      msg.textContent = `미리보기 OK (${uploadItems.length}행)`;
+    } catch (e) {
+      msg.textContent = "미리보기 실패: " + e.message;
+    }
+  });
+
+  document.getElementById("btnApplyUpload").addEventListener("click", async () => {
+    const msg = document.getElementById("uploadMsg");
+    msg.textContent = "업로드 반영 중...";
+    try {
+      if (!uploadItems.length) throw new Error("먼저 미리보기를 해줘");
+      // 여러 달 섞여 있으면 month_key별로 나눠서 커밋하는 게 안전
+      const byMonth = {};
+      uploadItems.forEach(r => {
+        if (!byMonth[r.month_key]) byMonth[r.month_key] = [];
+        byMonth[r.month_key].push({ category: r.category, amount: r.amount });
+      });
+
+      for (const mk of Object.keys(byMonth)) {
+        await postJson("/commitMonthly", {
+          month_key: mk,
+          source: "upload_monthly",
+          items: byMonth[mk]
+        });
+      }
+      msg.textContent = "업로드 반영 완료";
+    } catch (e) {
+      msg.textContent = "실패: " + e.message;
+    }
+  });
+
+  // Dashboard 새로고침(예시)
+  document.getElementById("btnRefresh").addEventListener("click", async () => {
+    const monthKey = document.getElementById("monthKey").value.trim();
+    const status = document.getElementById("status");
+    status.textContent = "불러오는 중...";
+    try {
+      const data = await postJson("/kpi", { month_key: monthKey });
+      document.getElementById("kpiSpend").textContent = data.spend ?? "-";
+      document.getElementById("kpiSave").textContent = data.save ?? "-";
+      document.getElementById("kpiIncome").textContent = data.income ?? "-";
+      status.textContent = "완료";
+    } catch (e) {
+      status.textContent = "실패: " + e.message;
+    }
+  });
+</script>
+</body>
+</html>
