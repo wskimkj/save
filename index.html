@@ -196,17 +196,17 @@
   });
 
   // ================== API helper (단일 엔드포인트) ==================
-  async function callApi(payload) {
+ async function callApi(payload) {
   const res = await fetch(API_URL, {
     method: "POST",
-    headers: { "Content-Type":"text/plain;charset=utf-8" },
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error(await res.text());
-  return res.json().catch(() => ({}));
+  return res.json();
 }
-n res.json().catch(() => ({}));
-  }
+
+
 
   // ================== 공통: 카테고리 테이블 렌더 ==================
   const monthlyTbody = document.querySelector("#catTable tbody");
