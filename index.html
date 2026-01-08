@@ -197,14 +197,15 @@
 
   // ================== API helper (단일 엔드포인트) ==================
   async function callApi(payload) {
-    if (!API_URL) throw new Error("API_URL이 비어있어요. Power Automate URL을 붙여넣어주세요.");
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json().catch(() => ({}));
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type":"text/plain;charset=utf-8" },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json().catch(() => ({}));
+}
+n res.json().catch(() => ({}));
   }
 
   // ================== 공통: 카테고리 테이블 렌더 ==================
